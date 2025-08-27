@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://api.twitch.tv; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.twitch.tv;">
+    <title>Twitch Poll Overlay</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600&display=swap');
+
+        :root {
+            --bg-color: rgba(0, 0, 0, 0.6);
+            --container-bg: rgba(20, 20, 20, 0.8);
+            --text-color: #fff;
+            --secondary-text: #ddd;
+            --bar-bg: rgba(100, 100, 100, 0.5);
+            --border-color: rgba(145, 70, 255, 0.5);
+            --shadow-color: rgba(0, 0, 0, 0.3);
+        }
+
+        body {
+            background: linear-gradient(135deg, rgba(100, 20, 150, 0.7), rgba(20, 10, 80, 0.7));
+            border: 1px solid var(--border-color);
+            font-family: 'Rajdhani', sans-serif;
+            width: 500px;
+            background-color: var(--bg-color);
+            border-radius: 12px;
+            padding: 15px;
+            color: var(--text-color);
+            box-shadow: 0 4px 20px var(--shadow-color);
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+            /* Empêche la sélection de texte */
+        }
+
+        .poll-container {
+            background-color: var(--container-bg);
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .poll-title {
+            font-size: 22px;
+            text-align: center;
+            margin-bottom: 15px;
+            color: var(--text-color);
+        }
+
+        .poll-option {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .poll-option-label {
+            width: 200px;
+            font-size: 16px;
+            color: var(--secondary-text);
+            word-break: break-word;
+            /* Évite le débordement */
+        }
+
+        .poll-bar-container {
+            flex: 1;
+            height: 20px;
+            background-color: var(--bar-bg);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 0 10px;
+        }
+
+        @keyframes blink {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .poll-bar {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.5s ease, background-color 0.3s;
+            animation: blink 0.5s;
+        }
+
+        .poll-percentage {
+            width: 100px;
+            text-align: right;
+            font-size: 16px;
+            color: var(--text-color);
+        }
+
+        /* Couleurs des barres (variables CSS pour plus de sécurité) */
+        .poll-bar.green {
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+        }
+
+        .poll-bar.red {
+            background: linear-gradient(90deg, #F44336, #FF5722);
+        }
+
+        .poll-bar.blue {
+            background: linear-gradient(90deg, #2196F3, #03A9F4);
+        }
+
+        .poll-bar.yellow {
+            background: linear-gradient(90deg, #FFC107, #FF9800);
+        }
+
+        /* État d'erreur */
+        .error-state {
+            color: #ff6b6b;
+            text-align: center;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="poll-container">
+        <div class="poll-title" id="poll-title">Chargement du sondage...</div>
+        <div id="poll-options">
+            <!-- Contenu dynamique -->
+        </div>
+    </div>
+
+    <script>
+        // ========== CONFIGURATION SÉCURISÉE ==========
+        // Ces valeurs devraient idéalement venir d'un backend ou de variables d'environnement
+        // NE JAMAIS COMMITER CE FICHIER AVEC TES VRAIES CLÉS !
+        const config = {
+            useMockData: true, // Passe à false quand tu seras Affilié
+            twitch: {
+                channelId: '', // À remplir plus tard (ne pas commiter !)
+                clientId: 'kgp762nuuoqcoxypju8c569th9wz7q5', // Client-ID public de Twitch (peu sensible)
+                // Le token doit être géré côté serveur en production !
+                token: 'qo7qtecs6kshrz0tdmgbxrely29tc5' // À remplir plus tard (NE PAS COMMITER !)
+            },
+            mockPoll: {
+                title: "Que devrais-je streamer ensuite ?",
+                choices: [
+                    { title: "Super Metroid", votes: 12 },
+                    { title: "Super Mario 64", votes: 19 },
+                    { title: "Donkey Kong Country 3", votes: 6 },
+                    { title: "Arrête de streamer fréro", votes: 54 }
+                ]
+            },
+            barColors: ['green', 'red', 'blue', 'yellow'],
+            refreshInterval: 3000 // 3 secondes
+        };
+
+        // ========== FONCTIONS DE SÉCURITÉ ==========
+        /**
+         * Échappe les caractères HTML pour éviter les XSS
+         * @param {string} unsafe - Texte non sécurisé
+         * @returns {string} Texte sécurisé
+         */
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe.toString()
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        /**
+         * Vérifie si une URL est sécurisée
+         * @param {string} url - URL à vérifier
+         * @returns {boolean} True si l'URL est autorisée
+         */
+        function isSafeUrl(url) {
+            const allowedDomains = ['api.twitch.tv'];
+            try {
+                const urlObj = new URL(url);
+                return allowedDomains.includes(urlObj.hostname);
+            } catch {
+                return false;
+            }
+        }
+
+        // ========== GESTION DU POLL ==========
+        /**
+         * Met à jour l'affichage du poll
+         * @param {Object} poll - Données du poll
+         */
+        function updatePollDisplay(poll) {
+            const pollTitle = document.getElementById('poll-title');
+            const optionsContainer = document.getElementById('poll-options');
+
+            // Nettoyage des données
+            pollTitle.textContent = escapeHtml(poll.title);
+            optionsContainer.innerHTML = '';
+
+            const totalVotes = poll.choices.reduce((sum, choice) => sum + (choice.votes || 0), 0);
+
+            poll.choices.forEach((choice, index) => {
+                const percentage = totalVotes > 0
+                    ? Math.round(((choice.votes || 0) / totalVotes) * 100)
+                    : 0;
+                const colorClass = config.barColors[index % config.barColors.length];
+
+                const optionDiv = document.createElement('div');
+                optionDiv.className = 'poll-option';
+                optionDiv.innerHTML = `
+                    <div class="poll-option-label">${escapeHtml(choice.title)}</div>
+                    <div class="poll-bar-container">
+                        <div class="poll-bar ${colorClass}" style="width: 0%;" data-target="${percentage}"></div>
+                    </div>
+                    <div class="poll-percentage">${percentage}% (${choice.votes || 0} Votes)</div>
+                `;
+                optionsContainer.appendChild(optionDiv);
+            });
+
+            // Animation des barres
+            setTimeout(() => {
+                document.querySelectorAll('.poll-bar').forEach(bar => {
+                    const targetWidth = bar.getAttribute('data-target');
+                    bar.style.width = `${targetWidth}%`;
+                });
+            }, 50);
+        }
+
+        /**
+         * Affiche un message d'erreur
+         * @param {string} message - Message d'erreur
+         */
+        function showError(message) {
+            document.getElementById('poll-title').textContent = "Erreur";
+            const optionsContainer = document.getElementById('poll-options');
+            optionsContainer.innerHTML = `
+                <div class="error-state">${escapeHtml(message)}</div>
+            `;
+        }
+
+        // ========== RÉCUPÉRATION DES DONNÉES ==========
+        /**
+         * Récupère le poll depuis l'API Twitch ou utilise des données mock
+         */
+        async function fetchPoll() {
+            try {
+                if (config.useMockData) {
+                    // Mode test avec données fictives
+                    updatePollDisplay(config.mockPoll);
+                    return;
+                }
+
+                // Vérification de sécurité avant d'appeler l'API
+                if (!config.twitch.channelId || !config.twitch.token) {
+                    showError("Configuration manquante");
+                    return;
+                }
+
+                const url = `https://api.twitch.tv/helix/polls?broadcaster_id=${config.twitch.channelId}`;
+
+                if (!isSafeUrl(url)) {
+                    showError("URL non autorisée");
+                    return;
+                }
+
+                const response = await fetch(url, {
+                    headers: {
+                        'Client-ID': config.twitch.clientId,
+                        'Authorization': `Bearer ${config.twitch.token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (!data.data || data.data.length === 0) {
+                    document.getElementById('poll-title').textContent = "Aucun sondage en cours";
+                    document.getElementById('poll-options').innerHTML = '';
+                    return;
+                }
+
+                // Récupère les détails du poll
+                const poll = data.data[0];
+                const choicesResponse = await fetch(`https://api.twitch.tv/helix/polls?broadcaster_id=${config.twitch.channelId}&id=${poll.id}`, {
+                    headers: {
+                        'Client-ID': config.twitch.clientId,
+                        'Authorization': `Bearer ${config.twitch.token}`
+                    }
+                });
+
+                if (!choicesResponse.ok) {
+                    throw new Error(`Choices API Error: ${choicesResponse.status}`);
+                }
+
+                const choicesData = await choicesResponse.json();
+                if (choicesData.data && choicesData.data.length > 0) {
+                    updatePollDisplay(choicesData.data[0]);
+                } else {
+                    showError("Impossible de charger les options");
+                }
+
+            } catch (error) {
+                console.error("Erreur:", error);
+                showError(config.useMockData ? "Erreur en mode test" : "Erreur API Twitch");
+            }
+        }
+
+        // ========== INITIALISATION ==========
+        // Premier chargement
+        fetchPoll();
+
+        // Rafraîchissement périodique
+        if (config.refreshInterval > 0) {
+            setInterval(fetchPoll, config.refreshInterval);
+        }
+
+        // Gestion des erreurs globales
+        window.addEventListener('error', (event) => {
+            console.error("Erreur globale:", event.error);
+            showError("Une erreur est survenue");
+        });
+    </script>
+</body>
+
+</html>

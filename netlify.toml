@@ -1,0 +1,11 @@
+# netlify.toml
+[build]
+  command = "echo 'Pas de build nécessaire'"  # Pas de commande de build pour un projet simple
+  publish = "public"                          # Dossier à déployer pour le frontend
+  functions = "netlify/functions"             # Dossier contenant les Functions
+
+# Redirections pour accéder aux Functions facilement
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
